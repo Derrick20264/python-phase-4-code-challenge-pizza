@@ -1,80 +1,86 @@
-#!/usr/bin/env python3
-import os
 from flask import Flask, request, jsonify
 from flask_migrate import Migrate
-from flask_restful import Api, Resource
-
-from server.models import db, Restaurant, Pizza, RestaurantPizza
-
-BASE_DIR = os.path.abspath(os.path.dirname(__file__))
-DATABASE = os.environ.get("DB_URI", f"sqlite:///{os.path.join(BASE_DIR, 'app.db')}")
+from models import db, Restaurant, Pizza, RestaurantPizza
 
 app = Flask(__name__)
-app.config["SQLALCHEMY_DATABASE_URI"] = DATABASE
-app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-app.json.compact = False
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///app.db'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db.init_app(app)
 migrate = Migrate(app, db)
-api = Api(app)
 
-
-@app.route("/")
-def index():
-    return "<h1>Code challenge</h1>"
-
+# --------- Routes ---------
 
 # GET /restaurants
-@app.route("/restaurants", methods=["GET"])
+@app.route('/restaurants', methods=['GET'])
 def get_restaurants():
     restaurants = Restaurant.query.all()
-    return jsonify([r.to_dict() for r in restaurants])
+    return jsonify([r.to_dict() for r in restaurants]), 200
 
-
-# GET /restaurants/:id
-@app.route("/restaurants/<int:id>", methods=["GET"])
+# GET /restaurants/<int:id>
+@app.route('/restaurants/<int:id>', methods=['GET'])
 def get_restaurant(id):
     restaurant = Restaurant.query.get(id)
-    if not restaurant:
-        return jsonify({"error": "Restaurant not found"}), 404
-    return jsonify(restaurant.to_dict(rules=("pizzas",)))
+    if restaurant:
+        return jsonify(restaurant.to_dict(include_pizzas=True)), 200
+    return jsonify({"error": "Restaurant not found"}), 404
 
-
-# DELETE /restaurants/:id
-@app.route("/restaurants/<int:id>", methods=["DELETE"])
+# DELETE /restaurants/<int:id>
+@app.route('/restaurants/<int:id>', methods=['DELETE'])
 def delete_restaurant(id):
     restaurant = Restaurant.query.get(id)
-    if not restaurant:
-        return jsonify({"error": "Restaurant not found"}), 404
-    db.session.delete(restaurant)
-    db.session.commit()
-    return "", 204
-
+    if restaurant:
+        db.session.delete(restaurant)
+        db.session.commit()
+        return '', 204
+    return jsonify({"error": "Restaurant not found"}), 404
 
 # GET /pizzas
-@app.route("/pizzas", methods=["GET"])
+@app.route('/pizzas', methods=['GET'])
 def get_pizzas():
     pizzas = Pizza.query.all()
-    return jsonify([p.to_dict() for p in pizzas])
-
+    return jsonify([p.to_dict() for p in pizzas]), 200
 
 # POST /restaurant_pizzas
-@app.route("/restaurant_pizzas", methods=["POST"])
+@app.route('/restaurant_pizzas', methods=['POST'])
 def create_restaurant_pizza():
     data = request.get_json()
+    price = data.get('price')
+    pizza_id = data.get('pizza_id')
+    restaurant_id = data.get('restaurant_id')
 
-    try:
-        new_rp = RestaurantPizza(
-            price=data["price"],
-            pizza_id=data["pizza_id"],
-            restaurant_id=data["restaurant_id"],
-        )
-        db.session.add(new_rp)
-        db.session.commit()
-        return jsonify(new_rp.pizza.to_dict()), 201
-    except Exception as e:
-        return jsonify({"errors": ["validation errors", str(e)]}), 400
+    # Validation
+    errors = []
+    if not RestaurantPizza.validate_price(price):
+        errors.append("validation errors")
 
+    pizza = Pizza.query.get(pizza_id)
+    if not pizza:
+        errors.append("validation errors")
+    restaurant = Restaurant.query.get(restaurant_id)
+    if not restaurant:
+        errors.append("validation errors")
 
-if __name__ == "__main__":
-    app.run(port=5555, debug=True)
+    if errors:
+        return jsonify({"errors": errors}), 400
+
+    rp = RestaurantPizza(price=price, pizza_id=pizza_id, restaurant_id=restaurant_id)
+    db.session.add(rp)
+    db.session.commit()
+
+    return jsonify({
+        "id": rp.id,
+        "price": rp.price,
+        "pizza_id": rp.pizza_id,
+        "restaurant_id": rp.restaurant_id,
+        "pizza": {
+            "id": rp.pizza.id,
+            "name": rp.pizza.name,
+            "ingredients": rp.pizza.ingredients
+        },
+        "restaurant": {
+            "id": rp.restaurant.id,
+            "name": rp.restaurant.name,
+            "address": rp.restaurant.address
+        }
+    }), 201
