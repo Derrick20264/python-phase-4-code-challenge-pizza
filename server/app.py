@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-from server.models import db, Restaurant, RestaurantPizza, Pizza
-from flask_migrate import Migrate
-from flask import Flask, request, jsonify
-from flask_restful import Api, Resource
 import os
+from flask import Flask, request, jsonify
+from flask_migrate import Migrate
+from flask_restful import Api, Resource
+
+from server.models import db, Restaurant, Pizza, RestaurantPizza
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 DATABASE = os.environ.get("DB_URI", f"sqlite:///{os.path.join(BASE_DIR, 'app.db')}")
@@ -13,8 +14,8 @@ app.config["SQLALCHEMY_DATABASE_URI"] = DATABASE
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 app.json.compact = False
 
-migrate = Migrate(app, db)
 db.init_app(app)
+migrate = Migrate(app, db)
 api = Api(app)
 
 
@@ -23,59 +24,56 @@ def index():
     return "<h1>Code challenge</h1>"
 
 
+# GET /restaurants
+@app.route("/restaurants", methods=["GET"])
+def get_restaurants():
+    restaurants = Restaurant.query.all()
+    return jsonify([r.to_dict() for r in restaurants])
 
-class Restaurants(Resource):
-    def get(self):
-        restaurants = [r.to_dict(only=("id", "name", "address")) for r in Restaurant.query.all()]
-        return restaurants, 200
+
+# GET /restaurants/:id
+@app.route("/restaurants/<int:id>", methods=["GET"])
+def get_restaurant(id):
+    restaurant = Restaurant.query.get(id)
+    if not restaurant:
+        return jsonify({"error": "Restaurant not found"}), 404
+    return jsonify(restaurant.to_dict(rules=("pizzas",)))
 
 
+# DELETE /restaurants/:id
+@app.route("/restaurants/<int:id>", methods=["DELETE"])
+def delete_restaurant(id):
+    restaurant = Restaurant.query.get(id)
+    if not restaurant:
+        return jsonify({"error": "Restaurant not found"}), 404
+    db.session.delete(restaurant)
+    db.session.commit()
+    return "", 204
 
-class RestaurantByID(Resource):
-    def get(self, id):
-        restaurant = Restaurant.query.get(id)
-        if not restaurant:
-            return {"error": "Restaurant not found"}, 404
-        return restaurant.to_dict(), 200
 
-    def delete(self, id):
-        restaurant = Restaurant.query.get(id)
-        if not restaurant:
-            return {"error": "Restaurant not found"}, 404
-        db.session.delete(restaurant)
+# GET /pizzas
+@app.route("/pizzas", methods=["GET"])
+def get_pizzas():
+    pizzas = Pizza.query.all()
+    return jsonify([p.to_dict() for p in pizzas])
+
+
+# POST /restaurant_pizzas
+@app.route("/restaurant_pizzas", methods=["POST"])
+def create_restaurant_pizza():
+    data = request.get_json()
+
+    try:
+        new_rp = RestaurantPizza(
+            price=data["price"],
+            pizza_id=data["pizza_id"],
+            restaurant_id=data["restaurant_id"],
+        )
+        db.session.add(new_rp)
         db.session.commit()
-        return {}, 204
-
-
-
-class Pizzas(Resource):
-    def get(self):
-        pizzas = [p.to_dict(only=("id", "name", "ingredients")) for p in Pizza.query.all()]
-        return pizzas, 200
-
-
-
-class RestaurantPizzas(Resource):
-    def post(self):
-        data = request.get_json()
-        try:
-            new_rp = RestaurantPizza(
-                price=data["price"],
-                pizza_id=data["pizza_id"],
-                restaurant_id=data["restaurant_id"]
-            )
-            db.session.add(new_rp)
-            db.session.commit()
-            return new_rp.to_dict(), 201
-        except Exception as e:
-            return {"errors": ["validation errors"]}, 400
-
-
-
-api.add_resource(Restaurants, "/restaurants")
-api.add_resource(RestaurantByID, "/restaurants/<int:id>")
-api.add_resource(Pizzas, "/pizzas")
-api.add_resource(RestaurantPizzas, "/restaurant_pizzas")
+        return jsonify(new_rp.pizza.to_dict()), 201
+    except Exception as e:
+        return jsonify({"errors": ["validation errors", str(e)]}), 400
 
 
 if __name__ == "__main__":
